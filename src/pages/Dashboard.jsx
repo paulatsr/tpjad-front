@@ -24,12 +24,26 @@ export default function Dashboard() {
 
   const loadStudentGrades = async (studentId) => {
     try {
-      const grades = await gradesAPI.getByStudent(studentId);
-      setStudentGrades(grades || []);
-      // Get recent grades (last 5)
-      setRecentGrades((grades || []).slice(-5).reverse());
+      const gradesResponse = await gradesAPI.getByStudent(studentId);
+      // gradesResponse is StudentGradesResponse with { student, gradesByCourse }
+      // Extract all grades from all courses
+      const allGrades = gradesResponse?.gradesByCourse?.flatMap(course => 
+        (course.grades || []).map(grade => ({
+          ...grade,
+          classCourseId: course.classCourseId,
+          courseName: course.course,
+          teacherName: course.teacher
+        }))
+      ) || [];
+      
+      setStudentGrades(allGrades);
+      // Get recent grades (last 5) - sort by date descending
+      const sortedGrades = [...allGrades].sort((a, b) => new Date(b.date) - new Date(a.date));
+      setRecentGrades(sortedGrades.slice(0, 5));
     } catch (err) {
       console.error("Error loading student grades:", err);
+      setStudentGrades([]);
+      setRecentGrades([]);
     }
   };
 
@@ -175,10 +189,10 @@ export default function Dashboard() {
                         </motion.div>
                         <div className="flex-1 min-w-0">
                           <p className="text-xs font-semibold text-gray-900 truncate">
-                            {course?.course?.name || "Course"}
+                            {grade.courseName || course?.course?.name || "Course"}
                           </p>
                           <p className="text-xs text-gray-500 mt-0.5 truncate">
-                            {new Date(grade.date).toLocaleDateString()} • {course?.teacher ? `${course.teacher.firstName} ${course.teacher.lastName}` : ""}
+                            {new Date(grade.date).toLocaleDateString()} • {grade.teacherName || (course?.teacher ? `${course.teacher.firstName} ${course.teacher.lastName}` : "")}
                           </p>
                         </div>
                       </motion.div>

@@ -107,6 +107,10 @@ export const studentsAPI = {
     return apiRequest(`/students/${id}`);
   },
   
+  getByUserId: async (userId) => {
+    return apiRequest(`/students/user/${userId}`);
+  },
+  
   getByClassroom: async (classroomId) => {
     return apiRequest(`/students/classroom/${classroomId}`);
   },
@@ -142,6 +146,10 @@ export const teachersAPI = {
     return apiRequest(`/teachers/${id}`);
   },
   
+  getByUserId: async (userId) => {
+    return apiRequest(`/teachers/user/${userId}`);
+  },
+  
   create: async (teacherData) => {
     return apiRequest('/teachers', {
       method: 'POST',
@@ -171,6 +179,10 @@ export const parentsAPI = {
   
   getById: async (id) => {
     return apiRequest(`/parents/${id}`);
+  },
+  
+  getByUserId: async (userId) => {
+    return apiRequest(`/parents/user/${userId}`);
   },
   
   getByStudent: async (studentId) => {
@@ -208,8 +220,12 @@ export const classroomsAPI = {
     return apiRequest(`/classrooms/${id}`);
   },
   
-  getByTeacher: async (teacherId) => {
+  getByHomeroomTeacher: async (teacherId) => {
     return apiRequest(`/classrooms/teacher/${teacherId}`);
+  },
+  
+  getHomeroomTeacher: async (classroomId) => {
+    return apiRequest(`/classrooms/${classroomId}/homeroom-teacher`);
   },
   
   create: async (classroomData) => {
@@ -272,6 +288,14 @@ export const classCoursesAPI = {
   
   getById: async (id) => {
     return apiRequest(`/class-courses/${id}`);
+  },
+  
+  getByClassroom: async (classroomId) => {
+    return apiRequest(`/class-courses/classroom/${classroomId}`);
+  },
+  
+  getByTeacher: async (teacherId) => {
+    return apiRequest(`/class-courses/teacher/${teacherId}`);
   },
   
   create: async (classCourseData) => {
@@ -349,6 +373,25 @@ export const absencesAPI = {
     return apiRequest(`/api/absences/${id}`, {
       method: 'DELETE',
     });
+  },
+};
+
+// ==================== ABSENCE-GRADES API ====================
+export const absenceGradesAPI = {
+  getByStudent: async (studentId) => {
+    return apiRequest(`/api/absence-grades/student/${studentId}`);
+  },
+  
+  getByStudentAndCourse: async (studentId, classCourseId) => {
+    return apiRequest(`/api/absence-grades/student/${studentId}/course/${classCourseId}`);
+  },
+  
+  getByCourse: async (classCourseId) => {
+    return apiRequest(`/api/absence-grades/course/${classCourseId}`);
+  },
+  
+  getByClassroom: async (classroomId) => {
+    return apiRequest(`/api/absence-grades/classroom/${classroomId}`);
   },
 };
 

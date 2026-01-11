@@ -64,14 +64,17 @@ export function AuthProvider({ children }) {
       // Store token
       localStorage.setItem('token', token);
       
-      // Create user object from decoded token
+      // Create user object from decoded token (now includes userId)
       const userData = {
+        userId: decoded.userId || null,
         username: decoded.sub || username,
         role: decoded.role || 'ADMIN',
       };
       
       localStorage.setItem('user', JSON.stringify(userData));
       setUser(userData);
+      
+      console.log('[AuthContext] User logged in:', userData);
       
       return { success: true, user: userData };
     } catch (error) {

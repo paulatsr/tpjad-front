@@ -4,11 +4,11 @@ import { motion } from "framer-motion";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import Modal from "../components/ui/Modal";
-import { Library, Clock, Plus, Edit, Trash2, GraduationCap } from "lucide-react";
+import { Library, Clock, Plus, Edit, Trash2, GraduationCap, Calendar, BookOpen } from "lucide-react";
 import { classCoursesAPI } from "../services/api";
 
 export default function Courses() {
-  const { courses, addCourse, updateCourse, deleteCourse, refreshData, classrooms, teachers, user, students, classCourses } = useSchool();
+  const { courses, addCourse, updateCourse, deleteCourse, refreshData, classrooms, teachers, user, students, classCourses, studentGradesAndAbsences } = useSchool();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedCourse, setSelectedCourse] = useState(null);
@@ -148,11 +148,124 @@ export default function Courses() {
               )}
             </motion.div>
 
-            {filteredCourses.length === 0 ? (
-        <div className="text-center p-12 bg-white rounded-xl border border-dashed border-blue-200">
-          <p className="text-gray-500 text-xs">No courses defined yet.</p>
-        </div>
-      ) : (
+            {user?.role === "STUDENT" ? (
+              // Catalog view for students
+              studentGradesAndAbsences && studentGradesAndAbsences.gradesByCourse && studentGradesAndAbsences.gradesByCourse.length > 0 ? (
+                <Card className="border-t-4 border-t-brand-electric shadow-xl paper-lined overflow-hidden">
+                  <div className="flex items-center gap-2 mb-6 pb-4 border-b-2 border-gray-800/20 bg-white/50 p-4 rounded-t-lg">
+                    <BookOpen className="text-brand-electric" />
+                    <h3 className="font-bold text-xl text-gray-900">Grade Catalog</h3>
+                  </div>
+
+                  <div className="overflow-x-auto p-2">
+                    <table className="w-full text-left text-sm border-collapse border-2 border-gray-800/50">
+                      <thead className="bg-gray-800/10 text-gray-900 uppercase text-xs font-bold tracking-wider">
+                        <tr>
+                          <th className="p-3 border-2 border-gray-800/30 w-64">Subject</th>
+                          <th className="p-3 border-2 border-gray-800/30">Grades / Date</th>
+                          <th className="p-3 border-2 border-gray-800/30">Absences</th>
+                        </tr>
+                      </thead>
+                      <tbody className="font-hand text-lg">
+                        {studentGradesAndAbsences.gradesByCourse.map((courseGrade) => {
+                          const average = courseGrade.grades && courseGrade.grades.length > 0 
+                            ? (courseGrade.grades.reduce((sum, g) => sum + g.value, 0) / courseGrade.grades.length).toFixed(2)
+                            : "";
+
+                          return (
+                            <tr key={courseGrade.classCourseId} className="hover:bg-blue-800/5 transition-colors border-b-2 border-gray-800/20">
+                              <td className="p-3 border-r-2 border-gray-800/30 font-bold text-gray-900">
+                                <div className="flex flex-col">
+                                  <span>{courseGrade.course}</span>
+                                  <span className="text-sm text-gray-600 font-normal mt-0.5">{courseGrade.teacher}</span>
+                                </div>
+                              </td>
+                              
+                              {/* Grades Grid - Handwritten Style */}
+                              <td className="p-2 border-r-2 border-gray-800/30">
+                                <div className="flex flex-wrap gap-3 items-center">
+                                  {courseGrade.grades && courseGrade.grades.length > 0 ? (
+                                    courseGrade.grades.map((grade, i) => (
+                                      <div 
+                                        key={i} 
+                                        className="flex flex-col items-center justify-center w-12 h-12 border-2 border-gray-800/60 bg-white shadow-sm rounded-sm transform rotate-[-1deg]"
+                                      >
+                                        <span className={`text-2xl font-bold leading-none ${grade.value < 5 ? 'text-red-700' : 'text-blue-900'}`}>
+                                          {grade.value}
+                                        </span>
+                                        {/* Line between grade and date */}
+                                        <div className="w-full h-px bg-gray-800/40 my-0.5"></div>
+                                        <span className="text-[11px] text-gray-600 leading-none font-bold">
+                                          {new Date(grade.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                        </span>
+                                      </div>
+                                    ))
+                                  ) : (
+                                    <span className="text-sm text-gray-500 italic p-2 opacity-70">—</span>
+                                  )}
+                                </div>
+                              </td>
+
+                              {/* Absences with Green Circle for Excused */}
+                              <td className="p-3">
+                                <div className="flex flex-wrap gap-x-6 gap-y-4 items-center py-2">
+                                  {courseGrade.absences && courseGrade.absences.length > 0 ? (
+                                    courseGrade.absences.map((absence, i) => (
+                                      <div key={i} className="relative inline-block group cursor-default z-10">
+                                        {/* Date Text */}
+                                        <span className={`text-xl font-bold px-2 relative z-20 ${absence.excused ? 'text-green-800' : 'text-red-700'}`}>
+                                          {new Date(absence.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                        </span>
+
+                                        {/* GREEN CIRCLE for Excused Absences */}
+                                        {absence.excused && (
+                                          <svg 
+                                            className="absolute inset-0 w-full h-full pointer-events-none z-10 overflow-visible" 
+                                            viewBox="0 0 100 100" 
+                                            preserveAspectRatio="none"
+                                          >
+                                            <path 
+                                              d="M5,50 C5,25 25,5 50,5 C75,5 95,25 95,50 C95,75 75,95 50,95 C25,95 5,75 5,50 Z"
+                                              fill="none" 
+                                              stroke="#16a34a"
+                                              strokeWidth="8"
+                                              strokeLinecap="round" 
+                                              strokeLinejoin="round"
+                                              vectorEffect="non-scaling-stroke"
+                                              opacity="0.7"
+                                              style={{ filter: 'blur(0.5px)' }}
+                                            />
+                                          </svg>
+                                        )}
+                                        
+                                        {/* Tooltip */}
+                                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-1 bg-gray-900 text-white text-xs font-sans rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-30 pointer-events-none">
+                                          {absence.excused ? "Excused" : "Unexcused"}
+                                        </div>
+                                      </div>
+                                    ))
+                                  ) : (
+                                    <span className="text-gray-500 italic text-base px-2 opacity-70">No absences</span>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </Card>
+              ) : (
+                <div className="text-center p-12 bg-white rounded-xl border border-dashed border-blue-200">
+                  <p className="text-gray-500 text-xs">No courses with grades or absences yet.</p>
+                </div>
+              )
+            ) : filteredCourses.length === 0 ? (
+              <div className="text-center p-12 bg-white rounded-xl border border-dashed border-blue-200">
+                <p className="text-gray-500 text-xs">No courses defined yet.</p>
+              </div>
+            ) : (
               <motion.div 
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}

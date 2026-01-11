@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect } from "react";
+import { useAuth } from "./AuthContext";
 import {
   studentsAPI,
   teachersAPI,
@@ -8,12 +9,32 @@ import {
   classCoursesAPI,
   gradesAPI,
   absencesAPI,
+  absenceGradesAPI,
   catalogAPI,
 } from "../services/api";
 
 const SchoolContext = createContext();
 
+// Helper function to decode JWT token
+const decodeJWT = (token) => {
+  try {
+    const base64Url = token.split('.')[1];
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split('')
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+    return JSON.parse(jsonPayload);
+  } catch (error) {
+    console.error('Error decoding JWT:', error);
+    return null;
+  }
+};
+
 export function SchoolProvider({ children }) {
+  const { user: authUser, logout: authLogout } = useAuth();
   const [user, setUser] = useState(null);
   const [classrooms, setClassrooms] = useState([]);
   const [students, setStudents] = useState([]);
@@ -21,16 +42,23 @@ export function SchoolProvider({ children }) {
   const [parents, setParents] = useState([]);
   const [courses, setCourses] = useState([]);
   const [classCourses, setClassCourses] = useState([]);
+  const [studentGradesAndAbsences, setStudentGradesAndAbsences] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
   // Load initial data only if user is authenticated
   useEffect(() => {
     const token = localStorage.getItem('token');
-    if (token) {
-      loadInitialData();
+    const userData = localStorage.getItem('user');
+    
+    if (token && userData) {
+      try {
+        const parsed = JSON.parse(userData);
+        loadInitialData(parsed.role, parsed.userId);
+      } catch (e) {
+        console.error('Error parsing user data:', e);
+      }
     } else {
-      // If no token, set empty data and stop loading
       setClassrooms([]);
       setStudents([]);
       setTeachers([]);
@@ -39,55 +67,176 @@ export function SchoolProvider({ children }) {
       setClassCourses([]);
       setLoading(false);
     }
-  }, []);
+  }, [authUser]);
 
-  const loadInitialData = async () => {
+  const loadInitialData = async (role, userId) => {
     const token = localStorage.getItem('token');
     if (!token) {
-      // Don't load data if user is not authenticated
       return;
     }
 
     setLoading(true);
     setError(null);
+    
     try {
-      // Load data based on user role/permissions
-      // Silently catch 401 errors (user not authenticated)
-      const [classroomsData, studentsData, teachersData, parentsData, coursesData, classCoursesData] = await Promise.all([
-        classroomsAPI.getAll().catch(err => {
-          if (err.message.includes('Unauthorized')) return [];
-          throw err;
-        }),
-        studentsAPI.getAll().catch(err => {
-          if (err.message.includes('Unauthorized')) return [];
-          throw err;
-        }),
-        teachersAPI.getAll().catch(err => {
-          if (err.message.includes('Unauthorized')) return [];
-          throw err;
-        }),
-        parentsAPI.getAll().catch(err => {
-          if (err.message.includes('Unauthorized')) return [];
-          throw err;
-        }),
-        coursesAPI.getAll().catch(err => {
-          if (err.message.includes('Unauthorized')) return [];
-          throw err;
-        }),
-        classCoursesAPI.getAll().catch(err => {
-          if (err.message.includes('Unauthorized')) return [];
-          throw err;
-        }),
-      ]);
+      console.log('[SchoolContext] Loading data for role:', role, 'userId:', userId);
 
-      setClassrooms(classroomsData || []);
-      setStudents(studentsData || []);
-      setTeachers(teachersData || []);
-      setParents(parentsData || []);
-      setCourses(coursesData || []);
-      setClassCourses(classCoursesData || []);
+      if (role === 'ADMIN') {
+        // ADMIN can access all data
+        const [classroomsData, studentsData, teachersData, parentsData, coursesData, classCoursesData] = await Promise.all([
+          classroomsAPI.getAll().catch(() => []),
+          studentsAPI.getAll().catch(() => []),
+          teachersAPI.getAll().catch(() => []),
+          parentsAPI.getAll().catch(() => []),
+          coursesAPI.getAll().catch(() => []),
+          classCoursesAPI.getAll().catch(() => []),
+        ]);
+
+        setClassrooms(classroomsData || []);
+        setStudents(studentsData || []);
+        setTeachers(teachersData || []);
+        setParents(parentsData || []);
+        setCourses(coursesData || []);
+        setClassCourses(classCoursesData || []);
+        setStudentGradesAndAbsences(null);
+      } else if (role === 'STUDENT') {
+        // STUDENT: Get student by userId, then load their grades and absences
+        // getByStudent returns all courses with grades and absences for this student
+        const currentStudent = await studentsAPI.getByUserId(userId).catch(() => null);
+        
+        if (currentStudent) {
+          const studentId = currentStudent.id;
+          const classroomId = currentStudent.classroomId;
+          
+          // Load classroom and grades/absences (which contains all courses for this student)
+          const [classroomsData, gradesAndAbsencesData] = await Promise.all([
+            classroomId ? classroomsAPI.getById(classroomId).then(c => [c]).catch(() => []) : Promise.resolve([]),
+            absenceGradesAPI.getByStudent(studentId).catch(() => null),
+          ]);
+
+          setStudents([currentStudent]);
+          setClassrooms(classroomsData);
+          setStudentGradesAndAbsences(gradesAndAbsencesData);
+          
+          // Extract ClassCourses and Courses from gradesByCourse
+          if (gradesAndAbsencesData && gradesAndAbsencesData.gradesByCourse && gradesAndAbsencesData.gradesByCourse.length > 0) {
+            // Get all ClassCourse IDs from gradesByCourse
+            const classCourseIds = gradesAndAbsencesData.gradesByCourse.map(cg => cg.classCourseId);
+            
+            // Fetch complete ClassCourse objects for each ID
+            const classCoursesPromises = classCourseIds.map(id => 
+              classCoursesAPI.getById(id).catch(() => null)
+            );
+            const classCoursesData = (await Promise.all(classCoursesPromises)).filter(cc => cc !== null);
+            
+            setClassCourses(classCoursesData);
+            
+            // Extract unique courses from ClassCourses
+            const uniqueCoursesMap = new Map();
+            classCoursesData.forEach(cc => {
+              if (cc.course && !uniqueCoursesMap.has(cc.course.id)) {
+                uniqueCoursesMap.set(cc.course.id, cc.course);
+              }
+            });
+            setCourses(Array.from(uniqueCoursesMap.values()));
+          } else {
+            setClassCourses([]);
+            setCourses([]);
+          }
+        } else {
+          setStudents([]);
+          setClassrooms([]);
+          setCourses([]);
+          setClassCourses([]);
+          setStudentGradesAndAbsences(null);
+        }
+        setTeachers([]);
+        setParents([]);
+      } else if (role === 'TEACHER') {
+        // TEACHER: Get teacher by userId, then load their data
+        const currentTeacher = await teachersAPI.getByUserId(userId).catch(() => null);
+        
+        if (currentTeacher) {
+          const teacherId = currentTeacher.id;
+          const [classCoursesData, coursesData] = await Promise.all([
+            classCoursesAPI.getByTeacher(teacherId).catch(() => []),
+            coursesAPI.getAll().catch(() => []), // Teachers can see all courses
+          ]);
+
+          // Extract unique classroom IDs from class courses
+          const uniqueClassroomIds = [...new Set(
+            (classCoursesData || [])
+              .map(cc => cc.classroomId || cc.classroom?.id)
+              .filter(id => id != null)
+          )];
+
+          // Get classrooms by ID for each unique classroom ID
+          const classroomsPromises = uniqueClassroomIds.map(id => 
+            classroomsAPI.getById(id).catch(() => null)
+          );
+          const classroomsData = (await Promise.all(classroomsPromises))
+            .filter(c => c != null);
+
+          // Get homeroom classroom if exists (separate from class courses classrooms)
+          const homeroomClassroom = await classroomsAPI.getByHomeroomTeacher(teacherId).catch(() => null);
+          
+          // Combine classrooms: homeroom classroom (if exists and not already in list) + classrooms from class courses
+          let allClassrooms = [...classroomsData];
+          if (homeroomClassroom && !classroomsData.find(c => c.id === homeroomClassroom.id)) {
+            allClassrooms = [homeroomClassroom, ...classroomsData];
+          }
+
+          setTeachers([currentTeacher]);
+          setClassrooms(allClassrooms);
+          setClassCourses(classCoursesData || []);
+          setCourses(coursesData || []);
+        } else {
+          setTeachers([]);
+          setClassrooms([]);
+          setClassCourses([]);
+          setCourses([]);
+        }
+        setStudents([]);
+        setParents([]);
+        setStudentGradesAndAbsences(null);
+      } else if (role === 'PARENT') {
+        // PARENT: Get parent by userId, then load their student's data
+        const currentParent = await parentsAPI.getByUserId(userId).catch(() => null);
+        
+        if (currentParent && currentParent.studentId) {
+          const studentId = currentParent.studentId;
+          const student = await studentsAPI.getById(studentId).catch(() => null);
+          
+          if (student) {
+            const [classroomsData, coursesData] = await Promise.all([
+              student.classroomId ? classroomsAPI.getById(student.classroomId).then(c => [c]).catch(() => []) : Promise.resolve([]),
+              coursesAPI.getAll().catch(() => []),
+            ]);
+
+            setParents([currentParent]);
+            setStudents([student]);
+            setClassrooms(classroomsData);
+            setCourses(coursesData || []);
+          } else {
+            setParents([currentParent]);
+            setStudents([]);
+            setClassrooms([]);
+            setCourses([]);
+          }
+        } else {
+          setParents(currentParent ? [currentParent] : []);
+          setStudents([]);
+          setClassrooms([]);
+          setCourses([]);
+        }
+        setTeachers([]);
+        setClassCourses([]);
+        setStudentGradesAndAbsences(null);
+      }
+
+      console.log('[SchoolContext] Data loaded successfully');
     } catch (err) {
-      console.error('Error loading initial data:', err);
+      console.error('[SchoolContext] Error loading initial data:', err);
       setError(err.message);
     } finally {
       setLoading(false);
@@ -105,7 +254,7 @@ export function SchoolProvider({ children }) {
   const getClassDetails = async (classId) => {
     try {
       const classroom = await classroomsAPI.getById(classId);
-      const classStudents = await studentsAPI.getByClassroom(classId);
+      const classStudents = await studentsAPI.getByClassroom(classId).catch(() => []);
       return { ...classroom, students: classStudents || [] };
     } catch (err) {
       console.error('Error loading class details:', err);
@@ -236,7 +385,38 @@ export function SchoolProvider({ children }) {
     }
   };
 
-  // ==================== CLASS-COURSES ====================
+  // ==================== COURSES ====================
+  const addCourse = async (courseData) => {
+    try {
+      const newCourse = await coursesAPI.create(courseData);
+      setCourses([...courses, newCourse]);
+      return { success: true, data: newCourse };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  };
+
+  const updateCourse = async (id, courseData) => {
+    try {
+      const updated = await coursesAPI.update(id, courseData);
+      setCourses(courses.map(c => c.id === id ? updated : c));
+      return { success: true, data: updated };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  };
+
+  const deleteCourse = async (id) => {
+    try {
+      await coursesAPI.delete(id);
+      setCourses(courses.filter(c => c.id !== id));
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  };
+
+  // ==================== CLASS COURSES ====================
   const addClassCourse = async (classCourseData) => {
     try {
       const newClassCourse = await classCoursesAPI.create(classCourseData);
@@ -254,97 +434,6 @@ export function SchoolProvider({ children }) {
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
-    }
-  };
-
-  // ==================== GRADES ====================
-  const addGrade = async (gradeData) => {
-    try {
-      const newGrade = await gradesAPI.create(gradeData);
-      await loadInitialData(); // Reload to get updated data
-      return { success: true, data: newGrade };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  };
-
-  const updateGrade = async (id, gradeData) => {
-    try {
-      const updated = await gradesAPI.update(id, gradeData);
-      await loadInitialData();
-      return { success: true, data: updated };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  };
-
-  const deleteGrade = async (id) => {
-    try {
-      await gradesAPI.delete(id);
-      await loadInitialData();
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  };
-
-  const bulkCreateGrades = async (bulkData) => {
-    try {
-      await gradesAPI.bulkCreate(bulkData);
-      await loadInitialData();
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  };
-
-  // ==================== ABSENCES ====================
-  const addAbsence = async (absenceData) => {
-    try {
-      const newAbsence = await absencesAPI.create(absenceData);
-      await loadInitialData();
-      return { success: true, data: newAbsence };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  };
-
-  const updateAbsence = async (id, date, excused) => {
-    try {
-      const updated = await absencesAPI.update(id, date, excused);
-      await loadInitialData();
-      return { success: true, data: updated };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  };
-
-  const deleteAbsence = async (id) => {
-    try {
-      await absencesAPI.delete(id);
-      await loadInitialData();
-      return { success: true };
-    } catch (err) {
-      return { success: false, error: err.message };
-    }
-  };
-
-  // ==================== CATALOG ====================
-  const getClassroomCatalog = async (classroomId) => {
-    try {
-      return await catalogAPI.getClassroomCatalog(classroomId);
-    } catch (err) {
-      console.error('Error loading classroom catalog:', err);
-      return null;
-    }
-  };
-
-  const getCourseCatalog = async (classroomId, classCourseId) => {
-    try {
-      return await catalogAPI.getCourseCatalog(classroomId, classCourseId);
-    } catch (err) {
-      console.error('Error loading course catalog:', err);
-      return null;
     }
   };
 
@@ -391,6 +480,7 @@ export function SchoolProvider({ children }) {
           name: displayName,
           role: parsed.role,
           username: parsed.username,
+          userId: parsed.userId,
           avatar: roleToAvatar(parsed.role),
         });
       } catch (e) {
@@ -422,6 +512,7 @@ export function SchoolProvider({ children }) {
         name: roleToDisplayName(roleOrUser.role, roleOrUser.username),
         role: roleOrUser.role,
         username: roleOrUser.username,
+        userId: roleOrUser.userId,
         avatar: roleToAvatar(roleOrUser.role),
       };
       setUser(userObj);
@@ -429,105 +520,81 @@ export function SchoolProvider({ children }) {
     }
   };
 
+  // Add refreshData function for backward compatibility with pages
+  const refreshData = () => {
+    const token = localStorage.getItem('token');
+    const userData = localStorage.getItem('user');
+    if (token && userData) {
+      try {
+        const parsed = JSON.parse(userData);
+        loadInitialData(parsed.role, parsed.userId);
+      } catch (e) {
+        console.error('Error parsing user data:', e);
+      }
+    }
+  };
+
+  // Logout function that clears everything and redirects to login
   const logout = () => {
+    // Clear auth context (token and user from localStorage)
+    authLogout();
+    // Clear school context user state
     setUser(null);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+    // Clear any school-related localStorage items
     localStorage.removeItem('schoolUser');
+    // Clear all school data
+    setClassrooms([]);
+    setStudents([]);
+    setTeachers([]);
+    setParents([]);
+    setCourses([]);
+    setClassCourses([]);
+    setStudentGradesAndAbsences(null);
+  };
+
+  const value = {
+    user,
+    classrooms,
+    students,
+    teachers,
+    parents,
+    courses,
+    classCourses,
+    studentGradesAndAbsences,
+    loading,
+    error,
+    login,
+    logout,
+    refreshData,
+    // Classroom methods
+    getClassroomsWithCounts,
+    getClassDetails,
+    addClassroom,
+    updateClassroom,
+    deleteClassroom,
+    // Student methods
+    addStudent,
+    updateStudent,
+    deleteStudent,
+    // Teacher methods
+    addTeacher,
+    updateTeacher,
+    deleteTeacher,
+    // Parent methods
+    addParent,
+    updateParent,
+    deleteParent,
+    // Course methods
+    addCourse,
+    updateCourse,
+    deleteCourse,
+    // ClassCourse methods
+    addClassCourse,
+    deleteClassCourse,
   };
 
   return (
-    <SchoolContext.Provider
-      value={{
-        // User
-        user,
-        login,
-        logout,
-        loading,
-        error,
-
-        // Classrooms
-        classrooms: getClassroomsWithCounts(),
-        getClassDetails,
-        addClassroom,
-        updateClassroom,
-        deleteClassroom,
-
-        // Students
-        students: students.map(s => {
-          const cls = classrooms.find(c => c.id === s.classroomId);
-          return { ...s, class: cls ? cls.name : "Unassigned" };
-        }),
-        addStudent,
-        updateStudent,
-        deleteStudent,
-
-        // Teachers
-        teachers,
-        addTeacher,
-        updateTeacher,
-        deleteTeacher,
-
-        // Parents
-        parents,
-        addParent,
-        updateParent,
-        deleteParent,
-
-        // Courses
-        courses,
-        addCourse: async (courseData) => {
-          try {
-            const newCourse = await coursesAPI.create(courseData);
-            setCourses([...courses, newCourse]);
-            return { success: true, data: newCourse };
-          } catch (err) {
-            return { success: false, error: err.message };
-          }
-        },
-        updateCourse: async (id, courseData) => {
-          try {
-            const updated = await coursesAPI.update(id, courseData);
-            setCourses(courses.map(c => c.id === id ? updated : c));
-            return { success: true, data: updated };
-          } catch (err) {
-            return { success: false, error: err.message };
-          }
-        },
-        deleteCourse: async (id) => {
-          try {
-            await coursesAPI.delete(id);
-            setCourses(courses.filter(c => c.id !== id));
-            return { success: true };
-          } catch (err) {
-            return { success: false, error: err.message };
-          }
-        },
-
-        // Class-Courses
-        classCourses,
-        addClassCourse,
-        deleteClassCourse,
-
-        // Grades
-        addGrade,
-        updateGrade,
-        deleteGrade,
-        bulkCreateGrades,
-
-        // Absences
-        addAbsence,
-        updateAbsence,
-        deleteAbsence,
-
-        // Catalog
-        getClassroomCatalog,
-        getCourseCatalog,
-
-        // Refresh
-        refreshData: loadInitialData,
-      }}
-    >
+    <SchoolContext.Provider value={value}>
       {children}
     </SchoolContext.Provider>
   );
