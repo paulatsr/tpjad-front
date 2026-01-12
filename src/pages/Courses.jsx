@@ -5,14 +5,13 @@ import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import Modal from "../components/ui/Modal";
 import { Library, Clock, Plus, Edit, Trash2, GraduationCap, Calendar, BookOpen } from "lucide-react";
-import { classCoursesAPI } from "../services/api";
 
 export default function Courses() {
   const { courses, addCourse, updateCourse, deleteCourse, refreshData, classrooms, teachers, user, students, classCourses, studentGradesAndAbsences } = useSchool();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [selectedCourse, setSelectedCourse] = useState(null);
-  const [formData, setFormData] = useState({ name: "", classroomId: "", teacherId: "" });
+  const [formData, setFormData] = useState({ name: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -26,27 +25,13 @@ export default function Courses() {
     setLoading(true);
 
     try {
-      // First create the course
       const courseResult = await addCourse({ name: formData.name });
-      if (!courseResult.success) {
-        setError(courseResult.error || "Failed to create course");
-        setLoading(false);
-        return;
-      }
-
-      // Then create the class-course association
-      const classCourseResult = await classCoursesAPI.create({
-        classroomId: parseInt(formData.classroomId),
-        courseId: courseResult.data.id,
-        teacherId: parseInt(formData.teacherId),
-      });
-
-      if (classCourseResult) {
+      if (courseResult.success) {
         setIsModalOpen(false);
-        setFormData({ name: "", classroomId: "", teacherId: "" });
+        setFormData({ name: "" });
         await refreshData();
       } else {
-        setError("Course created but failed to assign to class");
+        setError(courseResult.error || "Failed to create course");
       }
     } catch (err) {
       setError(err.message || "An error occurred");
@@ -134,10 +119,10 @@ export default function Courses() {
                 </motion.div>
                 <div>
                   <h1 className="text-xl font-bold text-gray-900">
-                    {user?.role === "STUDENT" ? "My Courses" : "Curriculum"}
+                    {(user?.role === "STUDENT" || user?.role === "PARENT") ? "My Courses" : "Curriculum"}
                   </h1>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    {user?.role === "STUDENT" ? "View all your subjects." : "Manage all subjects available."}
+                    {(user?.role === "STUDENT" || user?.role === "PARENT") ? "View all your subjects." : "Manage all subjects available."}
                   </p>
                 </div>
               </div>
@@ -148,13 +133,13 @@ export default function Courses() {
               )}
             </motion.div>
 
-            {user?.role === "STUDENT" ? (
-              // Catalog view for students
+            {(user?.role === "STUDENT" || user?.role === "PARENT") ? (
+              // Catalog view for students and parents
               studentGradesAndAbsences && studentGradesAndAbsences.gradesByCourse && studentGradesAndAbsences.gradesByCourse.length > 0 ? (
                 <Card className="border-t-4 border-t-brand-electric shadow-xl paper-lined overflow-hidden">
                   <div className="flex items-center gap-2 mb-6 pb-4 border-b-2 border-gray-800/20 bg-white/50 p-4 rounded-t-lg">
                     <BookOpen className="text-brand-electric" />
-                    <h3 className="font-bold text-xl text-gray-900">Grade Catalog</h3>
+                    <h3 className="font-bold text-xl text-gray-900">Catalog</h3>
                   </div>
 
                   <div className="overflow-x-auto p-2">
@@ -311,7 +296,7 @@ export default function Courses() {
                 </motion.div>
               </div>
                       <h3 className="text-base font-bold text-gray-900 mb-2">{c.name}</h3>
-                      {user?.role === "STUDENT" && classCourse && (
+                      {(user?.role === "STUDENT" || user?.role === "PARENT") && classCourse && (
                         <p className="text-xs text-gray-500 mt-2">
                           Teacher: {classCourse.teacher ? `${classCourse.teacher.firstName} ${classCourse.teacher.lastName}` : "—"}
                         </p>
@@ -331,7 +316,7 @@ export default function Courses() {
         isOpen={isModalOpen}
         onClose={() => {
           setIsModalOpen(false);
-          setFormData({ name: "", classroomId: "", teacherId: "" });
+          setFormData({ name: "" });
           setError("");
         }}
         title="Create New Course"
@@ -347,46 +332,14 @@ export default function Courses() {
             <input
               type="text"
               className="w-full p-2 border border-blue-200 rounded-lg outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all text-xs"
-              placeholder="e.g. Advanced Physics"
+              placeholder="e.g. Mathematics, Physics, Chemistry"
               value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              onChange={(e) => setFormData({ name: e.target.value })}
               required
             />
           </div>
-          <div>
-            <label className="block text-xs font-semibold text-gray-700 mb-1.5">Classroom</label>
-            <select
-              className="w-full p-2 border border-blue-200 rounded-lg outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all text-xs"
-              value={formData.classroomId}
-              onChange={(e) => setFormData({ ...formData, classroomId: e.target.value })}
-              required
-            >
-              <option value="">Select a classroom</option>
-              {classrooms.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-gray-700 mb-1.5">Teacher</label>
-            <select
-              className="w-full p-2 border border-blue-200 rounded-lg outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all text-xs"
-              value={formData.teacherId}
-              onChange={(e) => setFormData({ ...formData, teacherId: e.target.value })}
-              required
-            >
-              <option value="">Select a teacher</option>
-              {teachers.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.firstName} {t.lastName}
-                </option>
-              ))}
-            </select>
-          </div>
           <Button type="submit" className="w-full mt-3 text-xs py-2" disabled={loading}>
-            {loading ? "Creating..." : "Save Course"}
+            {loading ? "Creating..." : "Create Course"}
           </Button>
         </form>
       </Modal>

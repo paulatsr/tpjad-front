@@ -190,48 +190,96 @@ export function SchoolProvider({ children }) {
           setClassrooms(allClassrooms);
           setClassCourses(classCoursesData || []);
           setCourses(coursesData || []);
+
+          // Load students and parents for teacher's classrooms
+          const studentsPromises = allClassrooms.map(classroom => 
+            studentsAPI.getByClassroom(classroom.id).catch(() => [])
+          );
+          const studentsArrays = await Promise.all(studentsPromises);
+          const studentsData = studentsArrays.flat();
+
+          // Get all parents for teacher's classrooms using the new API
+          const parentsPromises = allClassrooms.map(classroom => 
+            parentsAPI.getByClassroom(classroom.id).catch(() => [])
+          );
+          const parentsArrays = await Promise.all(parentsPromises);
+          const parentsData = parentsArrays.flat();
+
+          setStudents(studentsData);
+          setParents(parentsData);
         } else {
           setTeachers([]);
           setClassrooms([]);
           setClassCourses([]);
           setCourses([]);
+          setStudents([]);
+          setParents([]);
         }
-        setStudents([]);
-        setParents([]);
         setStudentGradesAndAbsences(null);
       } else if (role === 'PARENT') {
-        // PARENT: Get parent by userId, then load their student's data
+        // PARENT: Get parent by userId, then get student by parent ID (like student does)
         const currentParent = await parentsAPI.getByUserId(userId).catch(() => null);
         
-        if (currentParent && currentParent.studentId) {
-          const studentId = currentParent.studentId;
-          const student = await studentsAPI.getById(studentId).catch(() => null);
+        if (currentParent && currentParent.id) {
+          // Get student by parent ID (same pattern as student)
+          const student = await studentsAPI.getByParentId(currentParent.id).catch(() => null);
           
           if (student) {
-            const [classroomsData, coursesData] = await Promise.all([
-              student.classroomId ? classroomsAPI.getById(student.classroomId).then(c => [c]).catch(() => []) : Promise.resolve([]),
-              coursesAPI.getAll().catch(() => []),
+            const classroomId = student.classroomId;
+            
+            // Load classroom and grades/absences (which contains all courses for this student)
+            const [classroomsData, gradesAndAbsencesData] = await Promise.all([
+              classroomId ? classroomsAPI.getById(classroomId).then(c => [c]).catch(() => []) : Promise.resolve([]),
+              absenceGradesAPI.getByStudent(student.id).catch(() => null),
             ]);
 
             setParents([currentParent]);
             setStudents([student]);
             setClassrooms(classroomsData);
-            setCourses(coursesData || []);
+            setStudentGradesAndAbsences(gradesAndAbsencesData);
+            
+            // Extract ClassCourses and Courses from gradesByCourse
+            if (gradesAndAbsencesData && gradesAndAbsencesData.gradesByCourse && gradesAndAbsencesData.gradesByCourse.length > 0) {
+              // Get all ClassCourse IDs from gradesByCourse
+              const classCourseIds = gradesAndAbsencesData.gradesByCourse.map(cg => cg.classCourseId);
+              
+              // Fetch complete ClassCourse objects for each ID
+              const classCoursesPromises = classCourseIds.map(id => 
+                classCoursesAPI.getById(id).catch(() => null)
+              );
+              const classCoursesData = (await Promise.all(classCoursesPromises)).filter(cc => cc !== null);
+              
+              setClassCourses(classCoursesData);
+              
+              // Extract unique courses from ClassCourses
+              const uniqueCoursesMap = new Map();
+              classCoursesData.forEach(cc => {
+                if (cc.course && !uniqueCoursesMap.has(cc.course.id)) {
+                  uniqueCoursesMap.set(cc.course.id, cc.course);
+                }
+              });
+              setCourses(Array.from(uniqueCoursesMap.values()));
+            } else {
+              setClassCourses([]);
+              setCourses([]);
+            }
           } else {
             setParents([currentParent]);
             setStudents([]);
             setClassrooms([]);
             setCourses([]);
+            setClassCourses([]);
+            setStudentGradesAndAbsences(null);
           }
         } else {
           setParents(currentParent ? [currentParent] : []);
           setStudents([]);
           setClassrooms([]);
           setCourses([]);
+          setClassCourses([]);
+          setStudentGradesAndAbsences(null);
         }
         setTeachers([]);
-        setClassCourses([]);
-        setStudentGradesAndAbsences(null);
       }
 
       console.log('[SchoolContext] Data loaded successfully');
@@ -441,7 +489,7 @@ export function SchoolProvider({ children }) {
   const roleToDisplayName = (role, username) => {
     switch (role) {
       case "ADMIN":
-        return "Director";
+        return "Principal";
       case "TEACHER":
         return `Prof. ${username}`;
       case "STUDENT":
@@ -489,12 +537,63 @@ export function SchoolProvider({ children }) {
     }
   }, []);
 
+  // Update user name with firstName and lastName after data is loaded
+  useEffect(() => {
+    if (user && user.userId && !loading) {
+      let fullName = null;
+      
+      if (user.role === "TEACHER" && teachers.length > 0) {
+        // Find teacher by matching user.id from teacher.user
+        const teacher = teachers.find(t => t.user?.id === user.userId);
+        if (teacher && teacher.firstName && teacher.lastName) {
+          fullName = `${teacher.firstName} ${teacher.lastName}`;
+        }
+      } else if (user.role === "STUDENT" && students.length > 0) {
+        // Find student by matching user.id from student.user
+        const student = students.find(s => s.user?.id === user.userId);
+        if (student && student.firstName && student.lastName) {
+          fullName = `${student.firstName} ${student.lastName}`;
+        }
+      } else if (user.role === "PARENT" && parents.length > 0) {
+        // Find parent by matching user.id from parent.user
+        const parent = parents.find(p => p.user?.id === user.userId);
+        if (parent && parent.firstName && parent.lastName) {
+          fullName = `${parent.firstName} ${parent.lastName}`;
+        }
+      }
+      
+      if (fullName && user.name !== fullName) {
+        setUser(prev => ({
+          ...prev,
+          name: fullName
+        }));
+        // Update localStorage as well
+        const userData = localStorage.getItem('user');
+        if (userData) {
+          try {
+            const parsed = JSON.parse(userData);
+            const schoolUser = {
+              name: fullName,
+              role: parsed.role,
+              username: parsed.username,
+              userId: parsed.userId,
+              avatar: roleToAvatar(parsed.role),
+            };
+            localStorage.setItem('schoolUser', JSON.stringify(schoolUser));
+          } catch (e) {
+            console.error('Error updating user in localStorage:', e);
+          }
+        }
+      }
+    }
+  }, [user, teachers, students, parents, loading]);
+
   const login = (roleOrUser) => {
     // Support both demo mode (string role) and real login (user object)
     if (typeof roleOrUser === "string") {
       // Demo mode
       if (roleOrUser === "ADMIN") {
-        const userObj = { name: "Director Ionescu", role: "ADMIN", avatar: "👨‍💼" };
+        const userObj = { name: "Principal Ionescu", role: "ADMIN", avatar: "👨‍💼" };
         setUser(userObj);
         localStorage.setItem('schoolUser', JSON.stringify(userObj));
       } else if (roleOrUser === "TEACHER") {

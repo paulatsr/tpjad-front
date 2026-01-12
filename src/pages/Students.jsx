@@ -4,10 +4,11 @@ import { motion, AnimatePresence } from "framer-motion";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import Modal from "../components/ui/Modal";
-import { MoreHorizontal, Eye, Edit, Trash2, Plus, School, GraduationCap, User } from "lucide-react";
+import { MoreHorizontal, Eye, Edit, Trash2, Plus, School, GraduationCap, User, RefreshCw } from "lucide-react";
+import { studentsAPI, teachersAPI, classroomsAPI } from "../services/api";
 
 export default function Students() {
-  const { students, classrooms, addStudent, updateStudent, deleteStudent, refreshData, user, parents } = useSchool();
+  const { students, classrooms, addStudent, updateStudent, deleteStudent, refreshData, user, parents, teachers } = useSchool();
   const [activeDropdown, setActiveDropdown] = useState(null);
   const [dropdownPosition, setDropdownPosition] = useState({ x: 0, y: 0 });
   const [selectedStudentForDropdown, setSelectedStudentForDropdown] = useState(null);
@@ -22,10 +23,50 @@ export default function Students() {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [generatingCode, setGeneratingCode] = useState(false);
+  const [loadedStudents, setLoadedStudents] = useState([]);
+  const [loadingStudents, setLoadingStudents] = useState(false);
+  const [teacherId, setTeacherId] = useState(null);
 
   useEffect(() => {
     refreshData();
   }, []);
+
+  // Load teacher ID for teachers
+  useEffect(() => {
+    if (user && user.role === "TEACHER" && teachers && teachers.length > 0) {
+      const teacher = teachers.find(t => t.user?.username === user.username);
+      if (teacher) {
+        setTeacherId(teacher.id);
+      }
+    }
+  }, [user, teachers]);
+
+  // Load students for teacher's homeroom classroom
+  useEffect(() => {
+    const loadStudentsForHomeroomTeacher = async () => {
+      if (user && user.role === "TEACHER" && teacherId) {
+        setLoadingStudents(true);
+        try {
+          const homeroomClassroom = await classroomsAPI.getByHomeroomTeacher(teacherId).catch(() => null);
+          if (homeroomClassroom) {
+            const students = await studentsAPI.getByClassroom(homeroomClassroom.id).catch(() => []);
+            setLoadedStudents(students);
+          } else {
+            setLoadedStudents([]);
+          }
+        } catch (err) {
+          console.error("Error loading students:", err);
+          setLoadedStudents([]);
+        } finally {
+          setLoadingStudents(false);
+        }
+      } else {
+        setLoadedStudents([]);
+      }
+    };
+    loadStudentsForHomeroomTeacher();
+  }, [user, teacherId]);
 
   // Filter students based on user role
   let filtered = students || [];
@@ -38,6 +79,8 @@ export default function Students() {
     } else {
       filtered = [];
     }
+  } else if (user && user.role === "TEACHER") {
+    filtered = loadedStudents || [];
   }
 
   const toggleDropdown = (id, event) => {
@@ -121,6 +164,7 @@ export default function Students() {
       const studentData = {
         firstName: formData.firstName,
         lastName: formData.lastName,
+        registrationCode: formData.registrationCode,
         classroomId: Number(formData.classroomId)
       };
       
@@ -179,7 +223,10 @@ export default function Students() {
           </motion.div>
           <div>
             <h1 className="text-xl font-bold text-gray-900">Student Directory</h1>
-            <p className="text-xs text-gray-500 mt-0.5">{filtered.length} student{filtered.length !== 1 ? 's' : ''}</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              {user && user.role === "TEACHER" ? "My Classroom - " : ""}
+              {filtered.length} student{filtered.length !== 1 ? 's' : ''}
+            </p>
           </div>
         </div>
         {user && user.role === "ADMIN" && (
@@ -247,7 +294,7 @@ export default function Students() {
                         </td>
                         <td className="px-4 py-3">
                           <span className="inline-flex items-center px-2 py-1 bg-gradient-to-r from-blue-50 to-cyan-50 text-blue-700 rounded-md text-xs font-semibold border border-blue-100">
-                            {s.class || "Unassigned"}
+                            {s.classroom ? s.classroom.name : (s.classroomId ? (classrooms.find(c => c.id === s.classroomId)?.name || "Unassigned") : "Unassigned")}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-gray-600 text-xs">{s.registrationCode || "—"}</td>
@@ -363,13 +410,33 @@ export default function Students() {
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1.5">Registration Code</label>
-            <input
-              type="text"
-              className="w-full p-2 border border-gray-200 rounded-lg outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all text-xs bg-white"
-              value={formData.registrationCode}
-              onChange={(e) => setFormData({ ...formData, registrationCode: e.target.value })}
-              required
-            />
+            <div className="flex gap-2">
+              <input
+                type="text"
+                className="flex-1 p-2 border border-gray-200 rounded-lg outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all text-xs bg-white"
+                value={formData.registrationCode}
+                onChange={(e) => setFormData({ ...formData, registrationCode: e.target.value })}
+                required
+              />
+              <Button
+                type="button"
+                onClick={async () => {
+                  setGeneratingCode(true);
+                  try {
+                    const code = await studentsAPI.generateRegCode();
+                    setFormData({ ...formData, registrationCode: code });
+                  } catch (err) {
+                    alert(err.message || "Failed to generate registration code");
+                  } finally {
+                    setGeneratingCode(false);
+                  }
+                }}
+                disabled={generatingCode}
+                className="px-3 text-xs"
+              >
+                <RefreshCw size={14} className={generatingCode ? "animate-spin" : ""} />
+              </Button>
+            </div>
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1.5">Classroom</label>
@@ -433,6 +500,36 @@ export default function Students() {
               onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
               required
             />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1.5">Registration Code</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                className="flex-1 p-2 border border-gray-200 rounded-lg outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all text-xs bg-white"
+                value={formData.registrationCode}
+                onChange={(e) => setFormData({ ...formData, registrationCode: e.target.value })}
+                required
+              />
+              <Button
+                type="button"
+                onClick={async () => {
+                  setGeneratingCode(true);
+                  try {
+                    const code = await studentsAPI.generateRegCode();
+                    setFormData({ ...formData, registrationCode: code });
+                  } catch (err) {
+                    alert(err.message || "Failed to generate registration code");
+                  } finally {
+                    setGeneratingCode(false);
+                  }
+                }}
+                disabled={generatingCode}
+                className="px-3 text-xs"
+              >
+                <RefreshCw size={14} className={generatingCode ? "animate-spin" : ""} />
+              </Button>
+            </div>
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1.5">Classroom</label>

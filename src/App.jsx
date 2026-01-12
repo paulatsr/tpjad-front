@@ -16,7 +16,8 @@ import Grades from "./pages/Grades";
 import MyClassroom from "./pages/MyClassroom";
 
 function ProtectedApp() {
-  const { user } = useSchool();
+  const schoolContext = useSchool();
+  const user = schoolContext?.user;
 
   // Dacă nu ești logat, te trimite la Login
   if (!user) return <Login />;

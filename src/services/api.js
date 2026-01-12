@@ -10,10 +10,15 @@ const getToken = () => {
 const apiRequest = async (endpoint, options = {}) => {
   const token = getToken();
   const headers = {
-    'Content-Type': 'application/json',
     ...options.headers,
   };
 
+  // Only add Content-Type for requests that have a body
+  if (options.body !== undefined && options.body !== null) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  // Always add Authorization header if token exists
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
@@ -51,20 +56,41 @@ const apiRequest = async (endpoint, options = {}) => {
     }
 
     // Handle JSON responses
+    // For DELETE requests (204 No Content or 200 with empty body), return null
+    if (options.method === 'DELETE' && (response.status === 204 || response.status === 200)) {
+      const text = await response.text().catch(() => '');
+      if (!text || text.trim() === '') {
+        return null;
+      }
+      // If there's content, try to parse it
+      try {
+        return JSON.parse(text);
+      } catch {
+        return null;
+      }
+    }
+    
     let data;
     try {
-      data = await response.json();
+      const text = await response.text();
+      if (!text || text.trim() === '') {
+        // Empty response is valid for some endpoints
+        if (response.ok) {
+          return null;
+        }
+        throw new Error(`Error: ${response.status}`);
+      }
+      data = JSON.parse(text);
     } catch (jsonError) {
       // If response is not JSON (e.g., "Unauthorized" text), handle it
       if (!response.ok) {
-        const text = await response.text().catch(() => '');
-        throw new Error(text || `Error: ${response.status}`);
+        throw new Error(`Error: ${response.status}`);
       }
       throw jsonError;
     }
     
     if (!response.ok) {
-      throw new Error(data.message || `Error: ${response.status}`);
+      throw new Error(data?.message || data?.error || `Error: ${response.status}`);
     }
     
     return data;
@@ -95,6 +121,13 @@ export const usersAPI = {
       body: JSON.stringify(userData),
     });
   },
+  
+  registerWithCode: async (userData) => {
+    return apiRequest('/users/register-code', {
+      method: 'POST',
+      body: JSON.stringify(userData),
+    });
+  },
 };
 
 // ==================== STUDENTS API ====================
@@ -111,8 +144,16 @@ export const studentsAPI = {
     return apiRequest(`/students/user/${userId}`);
   },
   
+  getByParentId: async (parentId) => {
+    return apiRequest(`/students/parent/${parentId}`);
+  },
+  
   getByClassroom: async (classroomId) => {
     return apiRequest(`/students/classroom/${classroomId}`);
+  },
+  
+  getNumberOfStudentsByClassroom: async (classroomId) => {
+    return apiRequest(`/students/classroom/${classroomId}/count`);
   },
   
   create: async (studentData) => {
@@ -133,6 +174,10 @@ export const studentsAPI = {
     return apiRequest(`/students/${id}`, {
       method: 'DELETE',
     });
+  },
+  
+  generateRegCode: async () => {
+    return apiRequest('/students/generateRegCode');
   },
 };
 
@@ -169,6 +214,10 @@ export const teachersAPI = {
       method: 'DELETE',
     });
   },
+  
+  generateRegCode: async () => {
+    return apiRequest('/teachers/generateRegCode');
+  },
 };
 
 // ==================== PARENTS API ====================
@@ -187,6 +236,10 @@ export const parentsAPI = {
   
   getByStudent: async (studentId) => {
     return apiRequest(`/parents/student/${studentId}`);
+  },
+
+  getByClassroom: async (classroomId) => {
+    return apiRequest(`/parents/classroom/${classroomId}`);
   },
   
   create: async (parentData) => {
@@ -207,6 +260,10 @@ export const parentsAPI = {
     return apiRequest(`/parents/${id}`, {
       method: 'DELETE',
     });
+  },
+  
+  generateRegCode: async () => {
+    return apiRequest('/parents/generateRegCode');
   },
 };
 
@@ -348,6 +405,10 @@ export const gradesAPI = {
   getByStudent: async (studentId) => {
     return apiRequest(`/api/grades/student/${studentId}`);
   },
+  
+  getByCourse: async (classCourseId) => {
+    return apiRequest(`/api/grades/course/${classCourseId}`);
+  },
 };
 
 // ==================== ABSENCES API ====================
@@ -364,8 +425,15 @@ export const absencesAPI = {
   },
   
   update: async (id, date, excused) => {
-    return apiRequest(`/api/absences/${id}?date=${date}&excused=${excused}`, {
+    return apiRequest(`/api/absences/${id}`, {
       method: 'PUT',
+      body: JSON.stringify({ date, excused }),
+    });
+  },
+  
+  toggleExcused: async (id) => {
+    return apiRequest(`/api/absences/${id}/toggle-excused`, {
+      method: 'PATCH',
     });
   },
   
@@ -373,6 +441,18 @@ export const absencesAPI = {
     return apiRequest(`/api/absences/${id}`, {
       method: 'DELETE',
     });
+  },
+  
+  getByCourse: async (classCourseId) => {
+    return apiRequest(`/api/absences/course/${classCourseId}`);
+  },
+  
+  getTotalByStudent: async (studentId) => {
+    return apiRequest(`/api/absences/student/${studentId}/total`);
+  },
+  
+  getUnexcusedByStudent: async (studentId) => {
+    return apiRequest(`/api/absences/student/${studentId}/unexcused`);
   },
 };
 
@@ -392,6 +472,82 @@ export const absenceGradesAPI = {
   
   getByClassroom: async (classroomId) => {
     return apiRequest(`/api/absence-grades/classroom/${classroomId}`);
+  },
+};
+
+// ==================== EXPORT API ====================
+export const exportAPI = {
+  exportParentsByHomeroomTeacher: async (teacherId) => {
+    const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/export/parents/homeroom-teacher/${teacherId}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+      },
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Export failed: ${response.status}`);
+    }
+    
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const contentDisposition = response.headers.get('content-disposition');
+    const fileName = contentDisposition ? contentDisposition.split('filename=')[1]?.replace(/"/g, '') : 'Parents registration_codes.xlsx';
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  },
+
+  exportStudentsByHomeroomTeacher: async (teacherId) => {
+    const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/export/students/homeroom-teacher/${teacherId}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+      },
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Export failed: ${response.status}`);
+    }
+    
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const contentDisposition = response.headers.get('content-disposition');
+    const fileName = contentDisposition ? contentDisposition.split('filename=')[1]?.replace(/"/g, '') : 'Students registration_codes.xlsx';
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  },
+
+  exportTeachers: async () => {
+    const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8080'}/api/export/teachers`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('token')}`,
+      },
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Export failed: ${response.status}`);
+    }
+    
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'Teachers.xlsx';
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
   },
 };
 

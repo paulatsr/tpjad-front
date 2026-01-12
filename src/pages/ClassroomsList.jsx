@@ -5,6 +5,7 @@ import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import Modal from "../components/ui/Modal";
 import { Users, GraduationCap, ArrowRight, Plus, BookOpen } from "lucide-react";
+import { studentsAPI } from "../services/api";
 
 export default function ClassroomsList() {
   const { classrooms, teachers, addClassroom, updateClassroom, deleteClassroom, refreshData, user, classCourses, students } = useSchool();
@@ -15,10 +16,34 @@ export default function ClassroomsList() {
   const [formData, setFormData] = useState({ name: "", homeroomTeacherId: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [studentsCount, setStudentsCount] = useState({});
 
   useEffect(() => {
     refreshData();
   }, []);
+
+  // Load students count for each classroom
+  useEffect(() => {
+    const loadStudentsCount = async () => {
+      if (!classrooms || classrooms.length === 0) return;
+      
+      const counts = {};
+      const promises = classrooms.map(async (c) => {
+        try {
+          const count = await studentsAPI.getNumberOfStudentsByClassroom(c.id);
+          counts[c.id] = count;
+        } catch (err) {
+          console.error(`Error loading student count for classroom ${c.id}:`, err);
+          counts[c.id] = 0;
+        }
+      });
+      
+      await Promise.all(promises);
+      setStudentsCount(counts);
+    };
+
+    loadStudentsCount();
+  }, [classrooms]);
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -143,7 +168,8 @@ export default function ClassroomsList() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredClassrooms.map((c) => {
-            const teacher = teachers.find(t => t.id === c.homeroomTeacherId);
+            // Use homeroomTeacher from classroom object if available, otherwise fallback to finding in teachers list
+            const teacher = c.homeroomTeacher || (c.homeroomTeacherId ? teachers.find(t => t.id === c.homeroomTeacherId) : null);
             return (
               <Card
                 key={c.id}
@@ -163,21 +189,16 @@ export default function ClassroomsList() {
                     <BookOpen size={16} className="text-gray-400" />
                     <span>
                       {teacher
-                        ? `${teacher.firstName} ${teacher.lastName}`
-                        : "No teacher assigned"}
+                        ? `Homeroom Teacher: ${teacher.firstName} ${teacher.lastName}`
+                        : "No homeroom teacher assigned"}
                     </span>
                   </div>
-
-                  <div className="w-full bg-gray-100 rounded-full h-1.5 mb-2 overflow-hidden">
-                    <div className="bg-brand-electric h-full rounded-full" style={{ width: "85%" }}></div>
-                  </div>
-                  <p className="text-xs text-gray-400">Attendance: Good</p>
                 </div>
 
                   <div className="flex items-center justify-between mt-6 pt-4 border-t border-gray-100">
                   <div className="flex items-center gap-2 text-sm font-medium text-gray-600">
                     <Users size={16} />
-                    {c.studentsCount || 0} Students
+                    {studentsCount[c.id] !== undefined ? studentsCount[c.id] : (c.studentsCount || 0)} Students
                   </div>
                   <div className="flex gap-2">
                     {user && user.role === "ADMIN" && (

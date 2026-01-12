@@ -3,24 +3,103 @@ import { useSchool } from "../context/SchoolContext";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import Card from "../components/ui/Card";
-import { Users, GraduationCap, BookOpen, Award, Plus, ArrowRight, Library, Presentation, HeartHandshake } from "lucide-react";
-import { gradesAPI } from "../services/api";
+import { Users, GraduationCap, BookOpen, Award, Plus, ArrowRight, Library, Presentation, HeartHandshake, AlertCircle } from "lucide-react";
+import { gradesAPI, teachersAPI, classroomsAPI, studentsAPI, parentsAPI, absencesAPI } from "../services/api";
 
 export default function Dashboard() {
   const { user, classrooms, students, teachers, courses, classCourses, parents } = useSchool();
   const navigate = useNavigate();
   const [studentGrades, setStudentGrades] = useState([]);
   const [recentGrades, setRecentGrades] = useState([]);
+  const [homeroomClassroom, setHomeroomClassroom] = useState(null);
+  const [homeroomStudents, setHomeroomStudents] = useState([]);
+  const [homeroomParents, setHomeroomParents] = useState([]);
+  const [teacherId, setTeacherId] = useState(null);
+  const [unexcusedAbsences, setUnexcusedAbsences] = useState(0);
+  const [studentClassroomName, setStudentClassroomName] = useState("—");
+  const [childName, setChildName] = useState("");
+  const [childClassroomName, setChildClassroomName] = useState("—");
+  const [childUnexcusedAbsences, setChildUnexcusedAbsences] = useState(0);
+  const [childGrades, setChildGrades] = useState([]);
 
   useEffect(() => {
     if (user && user.role === "STUDENT") {
-      // Find student by username
-      const student = students.find(s => s.user?.username === user.username);
-      if (student) {
-        loadStudentGrades(student.id);
-      }
+      // Get student by userId (like admin does)
+      const loadStudentData = async () => {
+        try {
+          const student = await studentsAPI.getByUserId(user.userId);
+          if (student) {
+            loadStudentGrades(student.id);
+            // Set classroom name
+            setStudentClassroomName(student?.classroom?.name || "—");
+            // Load unexcused absences
+            const unexcusedData = await absencesAPI.getUnexcusedByStudent(student.id);
+            setUnexcusedAbsences(unexcusedData?.unexcusedAbsences || 0);
+          }
+        } catch (err) {
+          console.error("Error loading student data:", err);
+        }
+      };
+      loadStudentData();
+    } else if (user && user.role === "PARENT") {
+      // Get parent by userId first to get parent ID, then get student by parent ID (like student does)
+      const loadParentData = async () => {
+        try {
+          const parent = await parentsAPI.getByUserId(user.userId);
+          if (parent && parent.id) {
+            // Get student by parent ID (same pattern as student)
+            const child = await studentsAPI.getByParentId(parent.id);
+            if (child) {
+              setChildName(`${child.firstName} ${child.lastName}`);
+              setChildClassroomName(child?.classroom?.name || "—");
+              // Load child's grades (same as student)
+              loadStudentGrades(child.id);
+              // Load child's unexcused absences
+              const unexcusedData = await absencesAPI.getUnexcusedByStudent(child.id);
+              setChildUnexcusedAbsences(unexcusedData?.unexcusedAbsences || 0);
+            }
+          }
+        } catch (err) {
+          console.error("Error loading parent data:", err);
+        }
+      };
+      loadParentData();
     }
-  }, [user, students]);
+  }, [user]);
+
+  // Load homeroom classroom data for teacher
+  useEffect(() => {
+    const loadHomeroomData = async () => {
+      if (user && user.role === "TEACHER" && user.userId) {
+        try {
+          const teacher = await teachersAPI.getByUserId(user.userId);
+          if (teacher && teacher.id) {
+            setTeacherId(teacher.id);
+            const homeroom = await classroomsAPI.getByHomeroomTeacher(teacher.id).catch(() => null);
+            if (homeroom) {
+              setHomeroomClassroom(homeroom);
+              // Load students from homeroom classroom
+              const studentsList = await studentsAPI.getByClassroom(homeroom.id).catch(() => []);
+              setHomeroomStudents(studentsList);
+              // Load parents from homeroom classroom
+              const parentsList = await parentsAPI.getByClassroom(homeroom.id).catch(() => []);
+              setHomeroomParents(parentsList);
+            } else {
+              setHomeroomClassroom(null);
+              setHomeroomStudents([]);
+              setHomeroomParents([]);
+            }
+          }
+        } catch (err) {
+          console.error("Error loading homeroom data:", err);
+          setHomeroomClassroom(null);
+          setHomeroomStudents([]);
+          setHomeroomParents([]);
+        }
+      }
+    };
+    loadHomeroomData();
+  }, [user]);
 
   const loadStudentGrades = async (studentId) => {
     try {
@@ -36,14 +115,28 @@ export default function Dashboard() {
         }))
       ) || [];
       
-      setStudentGrades(allGrades);
-      // Get recent grades (last 5) - sort by date descending
-      const sortedGrades = [...allGrades].sort((a, b) => new Date(b.date) - new Date(a.date));
-      setRecentGrades(sortedGrades.slice(0, 5));
+      // Set grades based on user role
+      if (user?.role === "STUDENT") {
+        setStudentGrades(allGrades);
+        // Get recent grades (last 5) - sort by date descending
+        const sortedGrades = [...allGrades].sort((a, b) => new Date(b.date) - new Date(a.date));
+        setRecentGrades(sortedGrades.slice(0, 5));
+      } else if (user?.role === "PARENT") {
+        // For parent, set child grades
+        setChildGrades(allGrades);
+        // Get recent grades (last 5) - sort by date descending
+        const sortedGrades = [...allGrades].sort((a, b) => new Date(b.date) - new Date(a.date));
+        setRecentGrades(sortedGrades.slice(0, 5));
+      }
     } catch (err) {
       console.error("Error loading student grades:", err);
-      setStudentGrades([]);
-      setRecentGrades([]);
+      if (user?.role === "STUDENT") {
+        setStudentGrades([]);
+        setRecentGrades([]);
+      } else if (user?.role === "PARENT") {
+        setChildGrades([]);
+        setRecentGrades([]);
+      }
     }
   };
 
@@ -67,29 +160,28 @@ export default function Dashboard() {
       return [
         { label: "My Classes", value: teacherClassrooms.length || 0, icon: <GraduationCap size={20} />, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
         { label: "My Courses", value: (classCourses || []).filter(cc => cc.teacher?.id === teacher?.id || cc.teacherId === teacher?.id).length || 0, icon: <Library size={20} />, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
-        { label: "Students", value: teacherClassrooms.reduce((sum, c) => sum + (c.studentsCount || 0), 0), icon: <Users size={20} />, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
-        { label: "Parents", value: (parents || []).length || 0, icon: <HeartHandshake size={20} />, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
+        { label: "Students", value: homeroomStudents.length || 0, icon: <Users size={20} />, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
+        { label: "Parents", value: homeroomParents.length || 0, icon: <HeartHandshake size={20} />, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
       ];
     } else if (user?.role === "STUDENT") {
-      const student = students.find(s => s.user?.username === user.username);
-      const studentClassroom = student ? classrooms.find(c => c.id === student.classroomId) : null;
       const avgGrade = studentGrades.length > 0 
         ? (studentGrades.reduce((sum, g) => sum + g.value, 0) / studentGrades.length).toFixed(2)
         : "—";
       return [
-        { label: "My Class", value: studentClassroom?.name || "—", icon: <GraduationCap size={20} />, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
+        { label: "My Class", value: studentClassroomName, icon: <GraduationCap size={20} />, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
         { label: "Total Grades", value: studentGrades.length || 0, icon: <Award size={20} />, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
         { label: "Average Grade", value: avgGrade, icon: <Award size={20} />, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
-        { label: "My Courses", value: studentClassroom ? (classCourses || []).filter(cc => cc.classroom?.id === studentClassroom.id || cc.classroomId === studentClassroom.id).length : 0, icon: <Library size={20} />, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
+        { label: "Unexcused Absents", value: unexcusedAbsences, icon: <AlertCircle size={20} />, iconBg: "bg-red-100", iconColor: "text-red-600" },
       ];
     } else if (user?.role === "PARENT") {
-      const parent = parents.find(p => p.user?.username === user.username);
-      const child = parent ? students.find(s => s.id === (parent.student?.id || parent.studentId)) : null;
+      const avgGrade = childGrades.length > 0 
+        ? (childGrades.reduce((sum, g) => sum + g.value, 0) / childGrades.length).toFixed(2)
+        : "—";
       return [
-        { label: "My Child", value: child ? `${child.firstName} ${child.lastName}` : "—", icon: <Users size={20} />, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
-        { label: "Class", value: child ? (classrooms.find(c => c.id === child.classroomId)?.name || "—") : "—", icon: <GraduationCap size={20} />, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
-        { label: "Registration Code", value: child?.registrationCode || "—", icon: <BookOpen size={20} />, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
-        { label: "Status", value: "Active", icon: <Award size={20} />, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
+        { label: "My Class", value: childClassroomName, icon: <GraduationCap size={20} />, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
+        { label: "Total Grades", value: childGrades.length || 0, icon: <Award size={20} />, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
+        { label: "Average Grade", value: avgGrade, icon: <Award size={20} />, iconBg: "bg-blue-100", iconColor: "text-blue-600" },
+        { label: "Unexcused Absents", value: childUnexcusedAbsences, icon: <AlertCircle size={20} />, iconBg: "bg-red-100", iconColor: "text-red-600" },
       ];
     }
     return [];
@@ -108,7 +200,11 @@ export default function Dashboard() {
           Dashboard
         </h1>
         <p className="text-xs text-gray-600">
-          Welcome back, <span className="font-semibold text-blue-600">{user?.name}</span>
+          {user?.role === "PARENT" && childName ? (
+            <>You are the parent of <span className="font-semibold text-blue-600">{childName}</span></>
+          ) : (
+            <>Welcome back, <span className="font-semibold text-blue-600">{user?.name}</span></>
+          )}
         </p>
       </motion.div>
 
@@ -151,21 +247,21 @@ export default function Dashboard() {
           <Card className="shadow-sm border border-gray-100">
             <div className="flex justify-between items-center mb-4 pb-3 border-b border-gray-200/50">
               <h3 className="text-lg font-bold text-gray-900">
-                {user?.role === "STUDENT" ? "Recent Grades" : "Recent Activity"}
+                {(user?.role === "STUDENT" || user?.role === "PARENT") ? "Recent Grades" : "Recent Activity"}
               </h3>
-              {user?.role === "STUDENT" && (
+              {(user?.role === "STUDENT" || user?.role === "PARENT") && (
                 <motion.button
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
-                  onClick={() => navigate("/grades")}
+                  onClick={() => navigate("/courses")}
                   className="text-xs text-blue-600 font-semibold hover:text-blue-700 hover:underline transition-colors"
                 >
-                  View All →
+                  View Catalog →
                 </motion.button>
               )}
             </div>
             <div className="space-y-2">
-              {user?.role === "STUDENT" ? (
+              {(user?.role === "STUDENT" || user?.role === "PARENT") ? (
                 recentGrades.length > 0 ? (
                   recentGrades.map((grade, idx) => {
                     const course = classCourses.find(cc => cc.id === grade.classCourse?.id || cc.id === grade.classCourseId);
@@ -328,29 +424,11 @@ export default function Dashboard() {
                   <motion.button
                     whileHover={{ scale: 1.03, x: 5, y: -2 }}
                     whileTap={{ scale: 0.97 }}
-                    onClick={() => navigate("/grades")}
-                    className="w-full text-left px-3 py-2.5 rounded-xl border border-blue-200 hover:border-blue-400 hover:bg-gradient-to-r hover:from-blue-50 hover:to-blue-100 transition-all duration-300 text-xs font-semibold text-gray-900 flex items-center gap-2.5 group shadow-sm hover:shadow-lg"
-                  >
-                    <motion.div whileHover={{ scale: 1.15, x: 2 }} transition={{ duration: 0.3 }} className="p-1.5 bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-lg shadow-md"><ArrowRight size={14}/></motion.div>
-                    View My Grades
-                  </motion.button>
-                  <motion.button
-                    whileHover={{ scale: 1.03, x: 5, y: -2 }}
-                    whileTap={{ scale: 0.97 }}
                     onClick={() => navigate("/courses")}
                     className="w-full text-left px-3 py-2.5 rounded-xl border border-blue-200 hover:border-blue-400 hover:bg-gradient-to-r hover:from-blue-50 hover:to-blue-100 transition-all duration-300 text-xs font-semibold text-gray-900 flex items-center gap-2.5 group shadow-sm hover:shadow-lg"
                   >
                     <motion.div whileHover={{ scale: 1.15, x: 2 }} transition={{ duration: 0.3 }} className="p-1.5 bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-lg shadow-md"><ArrowRight size={14}/></motion.div>
-                    View My Courses
-                  </motion.button>
-                  <motion.button
-                    whileHover={{ scale: 1.03, x: 5, y: -2 }}
-                    whileTap={{ scale: 0.97 }}
-                    onClick={() => navigate("/classrooms")}
-                    className="w-full text-left px-3 py-2.5 rounded-xl border border-blue-200 hover:border-blue-400 hover:bg-gradient-to-r hover:from-blue-50 hover:to-blue-100 transition-all duration-300 text-xs font-semibold text-gray-900 flex items-center gap-2.5 group shadow-sm hover:shadow-lg"
-                  >
-                    <motion.div whileHover={{ scale: 1.15, x: 2 }} transition={{ duration: 0.3 }} className="p-1.5 bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-lg shadow-md"><ArrowRight size={14}/></motion.div>
-                    My Classroom
+                    View Catalog
                   </motion.button>
                 </>
               )}
@@ -359,11 +437,11 @@ export default function Dashboard() {
                   <motion.button
                     whileHover={{ scale: 1.03, x: 5, y: -2 }}
                     whileTap={{ scale: 0.97 }}
-                    onClick={() => navigate("/students")}
+                    onClick={() => navigate("/courses")}
                     className="w-full text-left px-3 py-2.5 rounded-xl border border-blue-200 hover:border-blue-400 hover:bg-gradient-to-r hover:from-blue-50 hover:to-blue-100 transition-all duration-300 text-xs font-semibold text-gray-900 flex items-center gap-2.5 group shadow-sm hover:shadow-lg"
                   >
                     <motion.div whileHover={{ scale: 1.15, x: 2 }} transition={{ duration: 0.3 }} className="p-1.5 bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-lg shadow-md"><ArrowRight size={14}/></motion.div>
-                    View My Child
+                    View Catalog
                   </motion.button>
                 </>
               )}

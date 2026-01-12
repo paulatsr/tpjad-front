@@ -4,7 +4,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import Card from "../components/ui/Card";
 import Button from "../components/ui/Button";
 import Modal from "../components/ui/Modal";
-import { Edit, Trash2, Plus, Presentation } from "lucide-react";
+import { Edit, Trash2, Plus, Presentation, Download, RefreshCw } from "lucide-react";
+import { exportAPI, teachersAPI } from "../services/api";
 
 export default function Teachers() {
   const { teachers, addTeacher, updateTeacher, deleteTeacher, refreshData } = useSchool();
@@ -18,12 +19,22 @@ export default function Teachers() {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [generatingCode, setGeneratingCode] = useState(false);
 
   useEffect(() => {
     refreshData();
   }, []);
 
   const filtered = teachers || [];
+
+  const handleExportTeachers = async () => {
+    try {
+      await exportAPI.exportTeachers();
+    } catch (err) {
+      console.error("Error exporting teachers:", err);
+      alert("Failed to export teachers.");
+    }
+  };
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -100,24 +111,32 @@ export default function Teachers() {
         transition={{ duration: 0.4 }}
         className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3"
       >
-        <div className="flex items-center gap-3">
-          <motion.div
-            whileHover={{ scale: 1.15, rotate: [0, 5, -5, 0] }}
-            transition={{ duration: 0.4 }}
-            className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/40"
-          >
-            <Presentation size={20} className="text-white" />
-          </motion.div>
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">Teachers Directory</h1>
-            <p className="text-xs text-gray-500 mt-0.5">{filtered.length} teacher{filtered.length !== 1 ? 's' : ''}</p>
+        <div>
+          <div className="flex items-center gap-3">
+            <motion.div
+              whileHover={{ scale: 1.15, rotate: [0, 5, -5, 0] }}
+              transition={{ duration: 0.4 }}
+              className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl flex items-center justify-center shadow-lg shadow-blue-500/40"
+            >
+              <Presentation size={20} className="text-white" />
+            </motion.div>
+            <div>
+              <h1 className="text-xl font-bold text-gray-900">Teachers Directory</h1>
+              <p className="text-xs text-gray-500 mt-0.5">{filtered.length} teacher{filtered.length !== 1 ? 's' : ''}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 mt-4">
+            <Button onClick={handleExportTeachers} className="flex items-center gap-2">
+              <Download size={16} />
+              Export Teachers
+            </Button>
+            <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
+              <Button onClick={() => setIsCreateModalOpen(true)} className="text-xs px-4 py-2">
+                <Plus size={14} className="mr-1.5" /> Add Teacher
+              </Button>
+            </motion.div>
           </div>
         </div>
-        <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-          <Button onClick={() => setIsCreateModalOpen(true)} className="text-xs px-4 py-2">
-            <Plus size={14} className="mr-1.5" /> Add Teacher
-          </Button>
-        </motion.div>
       </motion.div>
 
       {/* Table Card */}
@@ -244,13 +263,33 @@ export default function Teachers() {
           </div>
           <div>
             <label className="block text-xs font-semibold text-gray-700 mb-1.5">Registration Code</label>
-            <input
-              type="text"
-              className="w-full p-2 border border-blue-200 rounded-lg outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all text-xs bg-white"
-              value={formData.registrationCode}
-              onChange={(e) => setFormData({ ...formData, registrationCode: e.target.value })}
-              required
-            />
+            <div className="flex gap-2">
+              <input
+                type="text"
+                className="flex-1 p-2 border border-blue-200 rounded-lg outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all text-xs bg-white"
+                value={formData.registrationCode}
+                onChange={(e) => setFormData({ ...formData, registrationCode: e.target.value })}
+                required
+              />
+              <Button
+                type="button"
+                onClick={async () => {
+                  setGeneratingCode(true);
+                  try {
+                    const code = await teachersAPI.generateRegCode();
+                    setFormData({ ...formData, registrationCode: code });
+                  } catch (err) {
+                    alert(err.message || "Failed to generate registration code");
+                  } finally {
+                    setGeneratingCode(false);
+                  }
+                }}
+                disabled={generatingCode}
+                className="px-3 text-xs"
+              >
+                <RefreshCw size={14} className={generatingCode ? "animate-spin" : ""} />
+              </Button>
+            </div>
           </div>
           <Button type="submit" className="w-full mt-3 text-xs py-2" disabled={loading}>
             {loading ? "Creating..." : "Create Teacher"}
@@ -298,6 +337,36 @@ export default function Teachers() {
               onChange={(e) => setFormData({ ...formData, lastName: e.target.value })}
               required
             />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-700 mb-1.5">Registration Code</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                className="flex-1 p-2 border border-blue-200 rounded-lg outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all text-xs bg-white"
+                value={formData.registrationCode}
+                onChange={(e) => setFormData({ ...formData, registrationCode: e.target.value })}
+                required
+              />
+              <Button
+                type="button"
+                onClick={async () => {
+                  setGeneratingCode(true);
+                  try {
+                    const code = await teachersAPI.generateRegCode();
+                    setFormData({ ...formData, registrationCode: code });
+                  } catch (err) {
+                    alert(err.message || "Failed to generate registration code");
+                  } finally {
+                    setGeneratingCode(false);
+                  }
+                }}
+                disabled={generatingCode}
+                className="px-3 text-xs"
+              >
+                <RefreshCw size={14} className={generatingCode ? "animate-spin" : ""} />
+              </Button>
+            </div>
           </div>
           <Button type="submit" className="w-full mt-3 text-xs py-2" disabled={loading}>
             {loading ? "Updating..." : "Update Teacher"}
